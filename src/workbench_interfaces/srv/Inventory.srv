@@ -1,0 +1,10 @@
+string action
+string item
+string location
+string person
+string text
+string user_id
+---
+bool ok
+string result_json
+string error

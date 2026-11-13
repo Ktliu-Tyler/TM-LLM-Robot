@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>工作台控制室</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#edf1ed;color:#183538;font:15px/1.5 "Inter","Microsoft JhengHei",sans-serif}header{background:#103e40;color:white;padding:28px max(5vw,20px);display:flex;align-items:center;justify-content:space-between}h1,h2,h3,p{margin:0}h1{font-size:28px}h2{font-size:19px;margin-bottom:16px}main{max-width:1380px;margin:24px auto;padding:0 3%;display:grid;grid-template-columns:1fr 1.2fr;gap:18px}section{background:#fff;border:1px solid #cfdad5;border-radius:15px;padding:22px;min-width:0}button,select,input,textarea{font:inherit;border:1px solid #bccbc6;border-radius:7px;padding:7px 10px;background:white;color:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button.primary{background:#126961;color:white;border-color:#126961}.row,.head{display:flex;align-items:center;justify-content:space-between;gap:10px}.row{padding:9px 0;border-top:1px solid #e0e6e1}.row small,small{display:block;color:#57716e}.head{margin-bottom:14px}.head h2{margin:0}.nodes small,.id{font-family:Consolas,monospace}.online{color:#12705a}.zones{display:grid;grid-template-columns:1fr 1fr;gap:10px}.zone{background:#f2f5ee;padding:12px;border-radius:9px}.zone h3{font-size:15px;color:#21675e;margin-bottom:6px}.slot{padding:5px 0}.id{color:#5d716e;font-size:12px}textarea{width:100%;resize:vertical;margin:8px 0}.formrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.formrow input{width:75px}pre{background:#152c30;color:#d9e9dd;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:245px;overflow:auto;border-radius:7px;font:13px/1.5 Consolas,monospace}a{color:#19635f}#feedback{color:#873b16;font-weight:600}#feedback:not(:empty){padding:10px 5%}#last{font-size:12px}.wide{grid-column:1/-1}@media(max-width:850px){main{grid-template-columns:1fr}.wide{grid-column:auto}header{padding:18px}section{padding:15px}}
+</style>
+<header><h1>工作台控制室</h1><span id="connection">連線中</span></header>
+<div id="feedback" role="status"></div><main>
+<section><div class="head"><h2>節點管理</h2><select id="mode" aria-label="狀態節點啟動模式"><option value="simulation">模擬搬運</option><option value="normal">一般派送</option></select></div><div id="nodes" class="nodes"></div></section>
+<section><div class="head"><h2>工作台分布</h2><small id="last"></small></div><div class="zones" id="zones"></div><small id="users"></small></section>
+<section><h2>麥克風語音測試</h2><div class="formrow"><label>使用者 <input id="micActor" value="U_A"></label><button class="primary" id="record" disabled>錄音 5 秒</button></div><p id="micStatus" role="status"></p><pre id="transcript" aria-live="polite">等待辨識文字</pre></section>
+<section><h2>模擬語音</h2><div class="formrow"><label>使用者 <input id="actor" value="U_A"></label><label>方位 <select id="zone"><option>UNKNOWN</option><option>LEFT</option><option>RIGHT</option><option>FRONT</option><option>BACK</option></select></label></div>
+<textarea id="message" rows="2" aria-label="發話文字">我的橡皮擦在哪裡</textarea><div class="formrow"><button class="primary" id="send">送出發話</button><select id="example" aria-label="載入範例"><option value="">選擇測試語句</option><option>查看整個資料庫的狀態</option><option>我想要把橡皮擦拿去桌面</option><option>清理桌面</option></select></div><small id="sent"></small><pre id="result">等待回覆</pre></section>
+<section><div class="head"><h2>節點日誌</h2><select id="lognode" aria-label="選擇日誌"></select></div><pre id="log">等待紀錄</pre><a id="download" download>下載完整日誌</a></section></main>
+<script>
+const $=id=>document.getElementById(id);
+const names={state:"資料庫狀態",agent:"語言模型 Agent",monitor:"桌面監看",mock_speech:"模擬語音",microphone:"麥克風（Qwen3-ASR）"};
+const el=(tag,text,cls)=>{const e=document.createElement(tag);e.textContent=text;if(cls)e.className=cls;return e};
+let lastId="",busy=false;
+async function api(path,data){
+ const res=await fetch(path,data?{method:"POST",headers:{"Content-Type":"application/json","X-Workbench":"1"},body:JSON.stringify(data)}:{cache:"no-store"});
+ const out=await res.json();if(!res.ok)throw Error(out.error);return out;
+}
+for(const [key,title] of Object.entries(names)){
+ const row=el("div","","row"), left=el("div",""), info=el("small","");
+ left.append(el("strong",title),info);const button=el("button","");row.append(left,button);$("nodes").append(row);
+ row.id="node-"+key;
+ button.onclick=async()=>{button.disabled=true;try{await api("/api/control",{node:key,action:button.dataset.action,mode:$("mode").value});$("feedback").textContent="";}catch(e){$("feedback").textContent=e.message}finally{await refresh()}};
+ $("lognode").add(new Option(title,key));
+}
+function draw(s){
+ for(const [key,n] of Object.entries(s.nodes)){
+  const row=$("node-"+key),button=row.querySelector("button");
+  const state=n.managed?(n.online?"執行中":"啟動中"):(n.online?"外部啟動":n.exit_code?"已結束 ("+n.exit_code+")":"已停止");
+  row.querySelector("small").textContent="/"+n.name+" · "+state+(n.mode?" · "+(n.mode==="simulation"?"模擬":"一般"):"");
+  button.textContent=n.managed?"停止":n.online?"外部執行":"啟動";button.dataset.action=n.managed?"stop":"start";button.disabled=n.online&&!n.managed;
+ }
+ $("connection").textContent="● 已連線 · Ubuntu-D";$("mode").disabled=s.nodes.state.managed||s.nodes.state.online;
+ const snap=s.snapshot, board=$("zones"); board.replaceChildren();
+ $("last").textContent=!s.nodes.state.online?"狀態節點離線":s.received?new Date(s.received).toLocaleTimeString():"等待快照";
+ if(snap){
+  const slots=[...(snap.locations||[])],known=new Set(slots.map(x=>x.location));
+  for(const o of snap.objects)if(!known.has(o.location)){slots.push({location:o.location,zone:"其他位置"});known.add(o.location)}
+  const groups=new Map();for(const slot of slots){if(!groups.has(slot.zone))groups.set(slot.zone,[]);groups.get(slot.zone).push(slot)}
+  for(const z of [...new Set(["A","B","工作檯桌面","交付區",...groups.keys()])]){
+   if(!groups.has(z))continue;const card=el("div","","zone");card.append(el("h3",z==="A"||z==="B"?z+" 區":z));
+   for(const slot of groups.get(z)){const items=snap.objects.filter(o=>o.location===slot.location);
+    const line=el("div","","slot");if(slot.location!==z)line.append(el("span",slot.location+"  ","id"));
+    line.append(el("span",items.map(o=>o.name).join("、")||"空位"));for(const o of items)line.append(el("small",o.object_id+" · "+o.owner+" · 歸位 "+(o.home_location||"未設定")));card.append(line)}
+   board.append(card)
+  }
+  $("users").textContent=snap.users.map(u=>u.user_id+" "+u.name).join("　");
+ }else board.append(el("p","等待資料庫快照"));
+ const mic=s.microphone, managed=s.nodes.microphone.managed;
+ $("record").disabled=!managed||mic.phase!=="ready";
+ const phases={loading:"載入辨識模型中",ready:"可以錄音",requested:"正在開啟麥克風",recording:"錄音中，請說話",recognizing:"辨識中",done:"辨識完成",empty:"本次沒有辨識結果"};
+ $("micStatus").textContent=managed?phases[mic.phase]:"請從節點管理啟動麥克風";
+ $("transcript").textContent=mic.text||"等待辨識文字";
+ $("send").disabled=!s.nodes.mock_speech.online||!s.nodes.agent.online||!s.nodes.state.online;
+ const result=lastId?s.results.find(x=>x.utterance_id===lastId):s.results[0];$("result").textContent=result?JSON.stringify(result,null,2):"等待回覆";
+}
+async function log(){const key=$("lognode").value,path="/logs/"+key;$("download").href=path;$("download").download=key+".log";const r=await fetch(path);if(r.ok&&key===$("lognode").value){const text=await r.text();$("log").textContent=text.trim().split("\n").slice(-45).join("\n")||"尚無紀錄"}}
+async function refresh(){if(busy)return;busy=true;try{draw(await api("/api/state"));await log()}catch(e){$("connection").textContent="連線中斷";$("feedback").textContent=e.message}finally{busy=false}}
+$("lognode").onchange=log;$("example").onchange=e=>{if(e.target.value)$("message").value=e.target.value};
+$("send").onclick=async()=>{try{const e=await api("/api/send",{text:$("message").value,user_id:$("actor").value,target_zone:$("zone").value});lastId=e.utterance_id;$("sent").textContent=lastId;$("feedback").textContent="";await refresh()}catch(e){$("feedback").textContent=e.message}};
+$("record").onclick=async()=>{$("record").disabled=true;try{await api("/api/record",{user_id:$("micActor").value});$("micStatus").textContent="請開始說話";$("feedback").textContent=""}catch(e){$("feedback").textContent=e.message}await refresh()};
+refresh();setInterval(refresh,1500);
+</script></html>
