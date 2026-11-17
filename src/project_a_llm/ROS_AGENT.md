@@ -1,6 +1,6 @@
 # 工作台 Agent 操作與 ROS 2 介面
 
-新版 `workbench_chat`（Jarvis）已整合進工作台控制室，可與舊版 Agent 互斥切換；沿用 agent/input、agent/result 與 Inventory，只讀查詢，不發布手臂命令。支援 Jarvis 喚醒、最終朗讀打斷、任務結束／閒置回待機。8767 監控頁內嵌在 8765 控制室，詳見[運行方法與架構](../../docs/LIVE_CHAT.md)。
+新版 `workbench_chat`（Jarvis）已整合進工作台控制室，可與舊版 Agent 互斥切換；沿用 agent/input、agent/result 與 Inventory，支援查詢、拿取／放置／歸位／清理桌面與規則更新；一般模式發布 arm/command，模擬模式只更新資料庫。支援 Jarvis 喚醒、最終朗讀打斷、任務結束／閒置回待機。8767 監控頁內嵌在 8765 控制室，詳見[運行方法與架構](../../docs/LIVE_CHAT.md)。
 
 Windows 操作入口見[瀏覽器管理介面](#windows-瀏覽器管理介面)。開發串接可直接使用[通訊模板](#通訊模板)。
 

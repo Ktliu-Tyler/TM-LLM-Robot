@@ -2,11 +2,11 @@
 
 2026-11-17。新版節點為 `/workbench_chat`，舊版 `/workbench_agent` 保留。控制室入口 **http://localhost:8765**，內嵌 Jarvis 對話與 API 監控；獨立監控仍可從 **http://localhost:8767** 開啟。
 
-新版承接舊輸入／結果 Topic，提供自然對話、上下文、資料庫查詢、語音喚醒及可打斷的最終朗讀。**新版目前只讀；需要原有搬運或修改歸位規則時，切回舊版 Agent。** 本版沒有把語音喚醒當成身分驗證，也沒有新增實體手臂控制權限。
+新版承接舊輸入／結果 Topic，提供自然對話、上下文、資料庫查詢、語音喚醒及可打斷的最終朗讀。新版已加入拿取、放置、歸位、清理桌面、設定歸位規則與位置登記，沿用既有 Inventory 與手臂 Topic。語音喚醒不是身分驗證；執行動作前須選擇使用者。
 
 ## 操作方式
 
-1. 在控制室「節點管理」啟動資料庫狀態與「Jarvis 對話 Agent（新版／只讀）」。示範啟動器會自動啟動這兩項。
+1. 在控制室「節點管理」啟動資料庫狀態與「Jarvis 對話 Agent（新版／含搬運）」。示範啟動器會自動啟動這兩項。
 2. 在內嵌 Jarvis 面板選「小安 U_A」，按「開始新對話」，再按「啟用 Jarvis 喚醒」。等待載入完成。
 3. 待機時說 **Jarvis**，短暫停頓，畫面顯示聆聽後再說「我的筆在哪裡？」。問題說完停頓約 0.9 秒即可，不必按錄音鍵。
 4. 回答播完會自動續聽，可追問「那它的預設歸位位置呢？」。
@@ -16,7 +16,7 @@
 
 使用英文發音 Jarvis 或 Hey Jarvis。名字辨識使用獨立的本機 KWS 模型，不讓 LLM 猜測是否喚醒。個人口音、噪音及外放回音仍需現場驗收；建議先用耳機。系統不具備完整聲學回音消除，朗讀時會將回答內的喚醒名字替換成「助理」，降低自我喚醒機會。
 
-使用者可連續輪流交談；只有最終答案播放階段及待機階段允許 KWS 喚醒。ASR、LLM 推論、工具查詢及「正在處理」提示期間，名字不會中止正在執行的請求。按「關閉麥克風」會停止後續播放／收音，但已開始的只讀模型輪次仍可能完成並顯示在畫面。
+使用者可連續輪流交談；只有最終答案播放階段及待機階段允許 KWS 喚醒。ASR、LLM 推論、工具查詢及「正在處理」提示期間，名字不會中止正在執行的請求。按「關閉麥克風」會停止後續播放／收音，但已開始的模型與工具輪次仍可能完成並顯示在畫面。
 
 ## 啟動測試控制室
 
@@ -84,7 +84,29 @@ python3 scripts/setup_jarvis_voice.py
 
 這些配置在啟動控制室／chat 前設定。第一次初始化包含 ASR 暖機，完成後才進入待機。LLM 思考模式可在啟用喚醒前勾選，語音會話中固定不變。
 
+## 搬運與清理桌面
+
+| 指令範例 | 動作 |
+| --- | --- |
+| 幫我拿我的筆 | pick：拿到工作檯桌面 |
+| 把我的筆放到交付區 | place：放到指定位置 |
+| 把我的筆歸位 | restore：放回預設儲位 |
+| 清理桌面 | tidy：所有桌面物品依各自規則歸位 |
+| 清理桌面上我的東西 | tidy + @me：只整理本人的桌面物品 |
+| 把我的筆的預設位置改為 B2 | set_home：修改收納規則 |
+| 將我的筆的位置登記為工作檯桌面 | move：只更新位置紀錄，不搬運 |
+
+清理桌面不含交付區。目的地沿用既有儲位、唯一物品與容量檢查；放置只允許物品預設儲位、桌面或交付區。模型可由歷史理解「它」，設定歸位規則仍要求當輪明確說出物品與位置。
+
+同一輪完全相同的動作參數只執行一次；服務逾時後不自動重送。這是記憶體內防重，並非跨重啟的持久交易。一般模式回傳 execution=dispatched，表示已發布 Topic，尚未得到手臂完成回報；模擬模式為 simulated，且不發布手臂命令。set_home / move 即使在一般模式也會更新所選資料庫。
+
+叫 Jarvis 打斷、任務結束、關閉麥克風都不是機械手臂急停，不能撤回已派送命令。現有架構尚未接上手臂 Action 的完成、失敗與取消回報。
+
 ## 實際架構
+
+![Jarvis 現行架構](JARVIS_ARCHITECTURE.png)
+
+[SVG 向量圖](JARVIS_ARCHITECTURE.svg)；可用 `python3 docs/build_jarvis_architecture.py` 重建，安裝 resvg-py 時另輸出 PNG。
 
 ```mermaid
 flowchart TD
@@ -98,8 +120,10 @@ flowchart TD
     VOICE --> CHAT[workbench_chat / session]
     INPUT[/project_a/agent/input] --> CHAT
     CHAT <--> MODEL[Ollama Qwen3.5-4B / 原生工具迴圈]
-    CHAT <--> INV[Inventory Service / 只讀驗證]
+    CHAT <--> INV[Inventory Service / 查詢、規則、搬運規劃]
     INV --> DB[(SQLite)]
+    CHAT -->|一般模式：派送| ARM[/project_a/arm/command]
+    INV -->|模擬模式：更新位置| DB
     CHAT --> RESULT[/project_a/agent/result]
     CHAT --> TRACE[/project_a/chat/trace]
     TRACE --> PANEL
@@ -124,9 +148,9 @@ ASR 的音量端點偵測使用 100 ms 音框、900 ms 靜音結句、單句約 
 | `/project_a/agent/input` String | 接收 utterance_id、text、user_id；同 user_id 的舊輸入沿用會話；同 ID 相同內容去重，不同內容報 ID_CONFLICT |
 | `/project_a/agent/result` String | 保留 utterance_id、status、message，新增 session_id、turn_id，tool=chat |
 | `/project_a/speech/command` String | 從舊 input 進來的結果仍發送，供既有 speaker 使用；Jarvis 麥克風對話由自身播放器處理，不重複發布 |
-| `/project_a/workbench/inventory` | 沿用原 srv 型別，只送 objects/users/status |
+| `/project_a/workbench/inventory` | 沿用原 srv 型別，支援查詢與六種工作台動作 |
 | `/project_a/chat/trace` String | 模型、工具與 voice_* 事件；控制室寫入 chat 日誌 |
-| `/project_a/arm/command` | 新版不發布，搬運仍由舊版 Agent 處理 |
+| `/project_a/arm/command` | 一般模式發布 place_object / return_object；模擬模式不發布 |
 
 控制室的模擬語音仍經 mock_speech 進正式 input；舊 microphone 單次錄音也可以送到新版。使用 Jarvis 喚醒時不需啟動舊 microphone 或 speaker。不要手動同時啟動兩個版本；新版偵測到舊節點時不處理正式 input，控制室互斥管理是主要切換機制。
 
@@ -134,9 +158,11 @@ ASR 的音量端點偵測使用 100 ms 音框、900 ms 靜音結句、單句約 
 
 ## 監控、工具與記憶
 
-模型自由決定是否查詢，role=tool 結果會回到 messages，允許多次查詢後回答。工具白名單只讀；不暴露 SQL、shell 或手臂腳本。`我的` 若模型漏填 person，程式補 @me；未選 actor 就回錯誤。
+模型自由決定是否查詢，role=tool 結果會回到 messages，允許多次查詢後回答。工具分為只讀 inventory 與 workbench_action；不暴露 SQL、shell 或手臂腳本。`我的` 若模型漏填 person，程式補 @me；未選 actor 就回錯誤。
 
 這是本機可信操作者介面，手動 user_id 不是聲紋驗證／登入，未實作資料列存取控制。HTTP 只綁 loopback，校驗 Host/Origin；控制室的節點操作另要求 X-Workbench 標頭。
+
+動作另外產生 arm_dispatch、action_result 與 tool_replay；最終派送回覆由執行回條產生，模擬回覆加上模擬標示，避免模型把派送說成搬完。
 
 監控事件包含 model_start/end、model_metrics、tool_start/validated/end/error、turn_start/end/error 及 voice_*。可展開參數、工具結果、錯誤、時間與實際播報文字。Ollama duration 單位 ns，工具及 ASR duration_ms 為毫秒。
 
@@ -155,7 +181,7 @@ ROS_DOMAIN_ID=88 ros2 topic echo /project_a/chat/trace std_msgs/msg/String --ful
 | 檔案 | 用途 |
 | --- | --- |
 | [chat_node.py](../src/project_a_llm/project_a_llm/chat_node.py) | ROS 相容入口、HTTP、session、trace |
-| [chat_core.py](../src/project_a_llm/project_a_llm/chat_core.py) | 自然對話、Ollama 串流、只讀工具迴圈 |
+| [chat_core.py](../src/project_a_llm/project_a_llm/chat_core.py) | 自然對話、Ollama 串流、查詢與動作工具迴圈 |
 | [chat_voice.py](../src/project_a_llm/project_a_llm/chat_voice.py) | 喚醒／對話／打斷／閒置狀態機及 TTS |
 | [chat_audio_worker.py](../src/project_a_llm/project_a_llm/chat_audio_worker.py) | 持續音訊環形緩衝、端點判斷、ASR |
 | [chat_kws.py](../src/project_a_llm/project_a_llm/chat_kws.py) | Jarvis／Hey Jarvis 關鍵字模型 |
@@ -169,9 +195,11 @@ ROS_DOMAIN_ID=88 ros2 topic echo /project_a/chat/trace std_msgs/msg/String --ful
 python3 -m pytest src/project_a_llm/test/test_chat_core.py src/project_a_llm/test/test_chat_voice.py -q
 python3 src/project_a_llm/test/chat_live_smoke.py
 python3 src/project_a_llm/test/jarvis_live_smoke.py
+python3 -m pytest src/project_a_llm/test/test_chat_actions.py -q
+python3 src/project_a_llm/test/chat_actions_live_smoke.py
 ```
 
-最後一個測試使用 domain 87、port 18767、資料庫副本與兩個臨時 PulseAudio 虛擬裝置；合成測試語音，不錄使用者麥克風，退出時清除音訊裝置及副本。測試以 HF_HUB_OFFLINE 使用已快取的 ASR 模型，請先完成一般語音初始化。請勿與使用同 domain／port 的另一個測試同時執行。
+語音測試使用 domain 87、port 18767、資料庫副本與兩個臨時 PulseAudio 虛擬裝置；合成測試語音，不錄使用者麥克風，退出時清除音訊裝置及副本。測試以 HF_HUB_OFFLINE 使用已快取的 ASR 模型，請先完成一般語音初始化。請勿與使用同 domain／port 的另一個測試同時執行。
 
 2026-11-17 已驗證 colcon 建置、20 項核心／語音測試、控制室內嵌面板與新舊 Agent 雙向互斥切換。完整虛擬音訊測試通過：一般中文不喚醒、Jarvis 開始收音、ASR 正確轉寫「我的筆在哪裡」、Inventory 查詢成功、最終 WAV 已開始播放後由 Jarvis 中止、追問沿用筆的上下文、播完自動續聽、「任務結束」回待機、閒置回待機、手動停止與資料庫不變。閒置測試縮短為 8 秒，產品預設 60 秒。
 
@@ -180,3 +208,7 @@ python3 src/project_a_llm/test/jarvis_live_smoke.py
 小模型仍可能沿用舊查詢、混淆稱呼或編造說明。監控證據用來檢查架構與結果，不保證模型每句都正確。現場口音、喇叭回音、多人說話及喚醒閾值仍需使用者實際測試。
 
 參考：[Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling)、[Ollama thinking](https://docs.ollama.com/capabilities/thinking)、[Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B)、[sherpa-onnx 官方喚醒模型](https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html)。
+
+搬運整合測試使用 domain 86、port 18768 與臨時資料庫；一般派送測試只接收 Topic，不連實體手臂。`chat_actions.py` 負責將 Inventory 任務轉成舊版手臂命令與執行回條。
+
+本次搬運版驗證：Ubuntu-D colcon 建置通過，核心／語音／動作共 33 項測試通過。真實 Qwen + ROS 測試通過拿取、桌面清理、修改預設儲位、交付、歸位及位置登記；假設且要求不要執行的問題沒有產生動作。模擬搬運核對副本位置且無 arm 訊息；一般模式核對單一 arm 命令、任務 ID、來源／目的地，並確認派送後資料庫位置不變。實體手臂完成／失敗回報及現場搬運尚未驗證。

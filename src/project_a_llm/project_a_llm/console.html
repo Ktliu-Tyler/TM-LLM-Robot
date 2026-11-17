@@ -14,7 +14,7 @@
 <section><div class="head"><h2>節點日誌</h2><select id="lognode" aria-label="選擇日誌"></select></div><pre id="log">等待紀錄</pre><a id="download" download>下載完整日誌</a></section></main>
 <script>
 const $=id=>document.getElementById(id);
-const names={state:"資料庫狀態",chat:"Jarvis 對話 Agent（新版／只讀）",agent:"語言模型 Agent（舊版／含搬運）",monitor:"桌面監看",mock_speech:"模擬語音",microphone:"麥克風（Qwen3-ASR）"};
+const names={state:"資料庫狀態",chat:"Jarvis 對話 Agent（新版／含搬運）",agent:"語言模型 Agent（舊版／含搬運）",monitor:"桌面監看",mock_speech:"模擬語音",microphone:"麥克風（Qwen3-ASR）"};
 const el=(tag,text,cls)=>{const e=document.createElement(tag);e.textContent=text;if(cls)e.className=cls;return e};
 let lastId="",busy=false;
 async function api(path,data){

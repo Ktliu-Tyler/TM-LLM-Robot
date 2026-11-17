@@ -1,4 +1,4 @@
-"""ROS read-only conversation node with a local live monitoring console."""
+"""ROS conversation and workbench action node with a local live monitoring console."""
 import copy
 import json
 import os
@@ -27,6 +27,7 @@ class ChatNode(Node):
         self.model = Ollama(self.model_name)
         self.inventory = self.create_client(Inventory, "/project_a/workbench/inventory")
         self.trace = self.create_publisher(String, "/project_a/chat/trace", 100)
+        self.arm = self.create_publisher(String, "/project_a/arm/command", 10)
         self.results = self.create_publisher(String, "/project_a/agent/result", 10)
         self.legacy_speech = self.create_publisher(String, "/project_a/speech/command", 10)
         self.sessions = {}
@@ -123,14 +124,21 @@ class ChatNode(Node):
                       "turn_end": "idle", "turn_error": "error"}
             session["phase"] = phases.get(kind, session["phase"])
 
-    def query(self, args, actor):
+    def query(self, args, actor, text="", turn_id="", emit=None):
         req = Inventory.Request()
         for key, value in args.items():
             setattr(req, key, value)
         req.user_id = actor
-        # Existing Inventory validates literal presence in req.text. This is a
-        # canonical READ-ONLY query after tool validation, not user authorization.
-        req.text = "查詢 我 " + " ".join(args.values())
+        # Structured arguments may resolve pronouns from conversation history.
+        # Preserve the explicit-rule check for home edits and registration intent.
+        req.text = "我 " + " ".join(args.values())
+        if req.action == "set_home":
+            req.text = text
+        if req.action == "move":
+            if not any(word in text for word in ("登記", "記錄", "紀錄")):
+                raise ValueError("move 只用於位置登記；實際搬運請使用 place")
+        if req.action == "pick":
+            req.text = "我 拿取 " + args["item"] + " " + args["person"]
         if not self.inventory.wait_for_service(timeout_sec=2):
             raise RuntimeError("Inventory Service 尚未啟動")
         future = self.inventory.call_async(req)
@@ -142,7 +150,13 @@ class ChatNode(Node):
         response = future.result()
         if not response.ok:
             raise RuntimeError(response.error)
-        return json.loads(response.result_json)
+        data = json.loads(response.result_json)
+        if req.action in ("pick", "place", "restore", "tidy", "set_home", "move"):
+            from project_a_llm.chat_actions import finish_action
+            return finish_action(args, actor, turn_id, data,
+                lambda task: self.arm.publish(String(data=json.dumps(task, ensure_ascii=False))),
+                emit or (lambda *a, **k: None))
+        return data
 
     def submit(self, sid, text, think, from_voice=False, event_id=None, legacy=False):
         if not isinstance(text, str) or not text.strip() or len(text) > 2000:
@@ -173,7 +187,7 @@ class ChatNode(Node):
                     groups.pop(0)
                 history = [message for group in groups for message in group]
             emit("turn_start", model=self.model_name, history_turns=len(groups))
-            group = run_turn(self.model, history, text, session["actor"], think, self.query, emit, voice=from_voice)
+            group = run_turn(self.model, history, text, session["actor"], think, lambda args, actor: self.query(args, actor, text, event_id or tid, emit), emit, voice=from_voice)
             # Thinking is visible in the monitor but is not replayed as memory.
             for message in group:
                 message.pop("thinking", None)

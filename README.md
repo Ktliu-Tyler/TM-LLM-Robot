@@ -19,3 +19,4 @@ ros2 run project_a_llm admin
 - [架構圖、語音測試與 ROS 介面](src/project_a_llm/ROS_AGENT.md)
 - [Qwen JSON 格式與草稿](src/project_a_llm/QWEN_OUTPUT_FORMAT.md)
 - [控制室 Jarvis：語音喚醒、對話打斷、LLM 監控與運行方法](docs/LIVE_CHAT.md)
+- [Jarvis 現行架構圖：語音、查詢、搬運與清理桌面](docs/JARVIS_ARCHITECTURE.svg)
