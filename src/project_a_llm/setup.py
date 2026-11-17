@@ -12,7 +12,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
     ],
     install_requires=['setuptools'],
-    package_data={package_name: ["console.html"]},
+    package_data={package_name: ["console.html", "chat.html"]},
     zip_safe=False,
     maintainer='root',
     maintainer_email='root@todo.todo',
@@ -21,6 +21,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'chat = project_a_llm.chat_node:main',
             'plan = project_a_llm.plan:main',
             'inventory = project_a_llm.inventory:main',
             'state = project_a_llm.state_node:main',
