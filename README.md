@@ -17,3 +17,4 @@ ros2 run project_a_llm admin
 
 - [架構圖、語音測試與 ROS 介面](src/project_a_llm/ROS_AGENT.md)
 - [Qwen JSON 格式與草稿](src/project_a_llm/QWEN_OUTPUT_FORMAT.md)
+- [連續對話、記憶與 Qwen Harness 架構提案](docs/CONVERSATIONAL_HARNESS.md)（設計稿，尚未實作）
