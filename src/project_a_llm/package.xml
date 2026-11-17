@@ -8,6 +8,8 @@
   <license>Apache-2.0</license>
 
   <depend>workbench_interfaces</depend>
+  <exec_depend>icu-devtools</exec_depend>
+  <exec_depend>pulseaudio-utils</exec_depend>
   <exec_depend>python3-tk</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>rcl_interfaces</exec_depend>

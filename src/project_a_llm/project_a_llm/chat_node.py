@@ -16,6 +16,7 @@ from std_msgs.msg import String
 from workbench_interfaces.srv import Inventory
 
 from project_a_llm.chat_core import Ollama, run_turn
+from project_a_llm.chat_voice import VoiceLoop
 
 
 class ChatNode(Node):
@@ -26,9 +27,66 @@ class ChatNode(Node):
         self.model = Ollama(self.model_name)
         self.inventory = self.create_client(Inventory, "/project_a/workbench/inventory")
         self.trace = self.create_publisher(String, "/project_a/chat/trace", 100)
+        self.results = self.create_publisher(String, "/project_a/agent/result", 10)
+        self.legacy_speech = self.create_publisher(String, "/project_a/speech/command", 10)
         self.sessions = {}
         self.lock = threading.RLock()
         self.capacity = threading.BoundedSemaphore(1)
+        self.voice = VoiceLoop(self)
+        self.legacy_sessions = {}
+        self.recent_inputs = {}
+        self.create_subscription(String, "/project_a/agent/input", self.receive, 10)
+
+    def receive(self, msg):
+        # The control room prevents coexistence; also fail closed for manual starts.
+        if "workbench_agent" in self.get_node_names():
+            self.get_logger().warning("舊版 Agent 正在運行，Jarvis 不重複處理正式輸入")
+            return
+        event_id = ""
+        try:
+            event = json.loads(msg.data)
+            if not isinstance(event, dict):
+                raise ValueError("輸入須為 JSON 物件")
+            event_id, text = event.get("utterance_id"), event.get("text")
+            actor = event.get("user_id", "")
+            if not isinstance(event_id, str) or not event_id.strip() or len(event_id) > 128:
+                raise ValueError("無效 utterance_id")
+            if not isinstance(actor, str) or len(actor) > 64:
+                raise ValueError("無效 user_id")
+            fingerprint = json.dumps(event, sort_keys=True, ensure_ascii=False)
+            if event_id in self.recent_inputs:
+                previous, result = self.recent_inputs[event_id]
+                if previous != fingerprint:
+                    raise ValueError("ID_CONFLICT")
+                if result:
+                    self.results.publish(String(data=json.dumps(result, ensure_ascii=False)))
+                return
+            sid = self.legacy_sessions.get(actor)
+            if sid not in self.sessions:
+                sid = self.new_session(actor)
+                self.legacy_sessions[actor] = sid
+            self.recent_inputs[event_id] = (fingerprint, None)
+            try:
+                self.submit(sid, text, False, event_id=event_id, legacy=True)
+            except Exception:
+                self.recent_inputs.pop(event_id, None)
+                raise
+        except (ValueError, TypeError, KeyError) as error:
+            self.results.publish(String(data=json.dumps(dict(utterance_id=event_id, status="error",
+                message=str(error), error=str(error)), ensure_ascii=False)))
+
+    def voice_event(self, sid, phase, **fields):
+        if not rclpy.ok():
+            return
+        with self.lock:
+            session = self.sessions.get(sid)
+            if session is None:
+                return
+            session["seq"] += 1
+            event = dict(seq=session["seq"], timestamp=time.time(), session_id=sid,
+                         kind="voice_" + phase, **fields)
+            session["events"].append(event)
+            self.trace.publish(String(data=json.dumps(event, ensure_ascii=False)))
 
     def new_session(self, actor):
         if not isinstance(actor, str) or len(actor) > 64:
@@ -36,10 +94,12 @@ class ChatNode(Node):
         with self.lock:
             # Bounded RAM; evict only inactive sessions.
             if len(self.sessions) >= 32:
-                oldest = next((k for k, v in self.sessions.items() if not v["busy"]), None)
+                oldest = next((k for k, v in self.sessions.items()
+                               if not v["busy"] and k != self.voice.sid), None)
                 if oldest is None:
                     raise ValueError("會話已滿")
                 del self.sessions[oldest]
+                self.legacy_sessions = {k: v for k, v in self.legacy_sessions.items() if v != oldest}
             sid = str(uuid.uuid4())
             self.sessions[sid] = dict(actor=actor, groups=[], turns=deque(maxlen=20),
                                       busy=False, phase="idle", events=deque(maxlen=300), seq=0)
@@ -56,7 +116,8 @@ class ChatNode(Node):
                 event = dict(seq=session["seq"], timestamp=time.time(), session_id=sid,
                              turn_id=tid, kind=kind, **fields)
                 session["events"].append(event)
-                self.trace.publish(String(data=json.dumps(event, ensure_ascii=False)))
+                if rclpy.ok():
+                    self.trace.publish(String(data=json.dumps(event, ensure_ascii=False)))
             phases = {"model_start": "等待模型", "tool_start": "等待 Inventory Service",
                       "tool_end": "工具已回覆", "tool_error": "工具失敗", "model_end": "模型已回覆",
                       "turn_end": "idle", "turn_error": "error"}
@@ -83,11 +144,13 @@ class ChatNode(Node):
             raise RuntimeError(response.error)
         return json.loads(response.result_json)
 
-    def submit(self, sid, text, think):
+    def submit(self, sid, text, think, from_voice=False, event_id=None, legacy=False):
         if not isinstance(text, str) or not text.strip() or len(text) > 2000:
             raise ValueError("請輸入 1–2000 字")
         if not isinstance(think, bool):
             raise ValueError("think 必須為布林值")
+        if not from_voice and self.voice.status["active"]:
+            raise ValueError("語音對話進行中；請先停止語音再輸入文字")
         with self.lock:
             session = self.sessions[sid]
             if not self.capacity.acquire(blocking=False):
@@ -96,10 +159,10 @@ class ChatNode(Node):
             session["busy"] = True
             session["phase"] = "準備中"
             session["turns"].append(dict(turn_id=tid, user=text.strip(), content="", thinking="", error=""))
-        threading.Thread(target=self.process, args=(sid, tid, text.strip(), think), daemon=True).start()
+        threading.Thread(target=self.process, args=(sid, tid, text.strip(), think, from_voice, event_id, legacy), daemon=True).start()
         return tid
 
-    def process(self, sid, tid, text, think):
+    def process(self, sid, tid, text, think, from_voice=False, event_id=None, legacy=False):
         emit = lambda kind, **fields: self.emit(sid, tid, kind, **fields)
         try:
             with self.lock:
@@ -110,12 +173,13 @@ class ChatNode(Node):
                     groups.pop(0)
                 history = [message for group in groups for message in group]
             emit("turn_start", model=self.model_name, history_turns=len(groups))
-            group = run_turn(self.model, history, text, session["actor"], think, self.query, emit)
+            group = run_turn(self.model, history, text, session["actor"], think, self.query, emit, voice=from_voice)
             # Thinking is visible in the monitor but is not replayed as memory.
             for message in group:
                 message.pop("thinking", None)
             with self.lock:
                 session["groups"] = (groups + [group])[-10:]
+                session["turns"][-1]["final"] = group[-1]["content"]
             emit("turn_end")
         except Exception as error:
             with self.lock:
@@ -123,15 +187,30 @@ class ChatNode(Node):
             emit("turn_error", error=str(error))
         finally:
             with self.lock:
+                turn = self.sessions[sid]["turns"][-1]
+                result = dict(utterance_id=event_id or tid, session_id=sid, turn_id=tid,
+                    status="error" if turn["error"] else "ok", tool="chat",
+                    message=turn["error"] or turn.get("final", turn["content"]))
                 self.sessions[sid]["busy"] = False
+                if event_id in self.recent_inputs:
+                    fingerprint, _ = self.recent_inputs[event_id]
+                    self.recent_inputs[event_id] = (fingerprint, result)
+                    if len(self.recent_inputs) > 512:
+                        del self.recent_inputs[next(iter(self.recent_inputs))]
+            if rclpy.ok():
+                self.results.publish(String(data=json.dumps(result, ensure_ascii=False)))
+            if legacy and rclpy.ok():
+                self.legacy_speech.publish(String(data=json.dumps(
+                    {"utterance_id": event_id, "text": result["message"]}, ensure_ascii=False)))
             self.capacity.release()
 
     def snapshot(self, sid):
+        voice = self.voice.snapshot(sid)
         with self.lock:
             session = self.sessions[sid]
             return copy.deepcopy(dict(session_id=sid, model=self.model_name, actor=session["actor"],
                 busy=session["busy"], phase=session["phase"], turns=list(session["turns"]),
-                events=list(session["events"]), service_ready=self.inventory.service_is_ready()))
+                events=list(session["events"]), service_ready=self.inventory.service_is_ready(), voice=voice))
 
 
 def make_server(node):
@@ -186,6 +265,22 @@ def make_server(node):
                 if self.path == "/api/chat":
                     tid = node.submit(data["session_id"], data.get("text"), data.get("think", False))
                     return self.respond(202, {"turn_id": tid})
+                if self.path == "/api/voice":
+                    sid = data["session_id"]
+                    if sid not in node.sessions:
+                        raise ValueError("會話不存在")
+                    if data.get("action") == "stop":
+                        node.voice.stop(sid)
+                    elif data.get("action") == "start":
+                        if node.sessions[sid]["busy"]:
+                            raise ValueError("請等待當前回覆完成")
+                        think = data.get("think", False)
+                        if not isinstance(think, bool):
+                            raise ValueError("think 必須為布林值")
+                        node.voice.start(sid, think)
+                    else:
+                        raise ValueError("未知語音操作")
+                    return self.respond(200, {"ok": True})
                 self.respond(404, {"error": "Not found"})
             except (ValueError, KeyError) as error:
                 self.respond(400, {"error": str(error)})
@@ -204,6 +299,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        node.voice.stop_event.set()
+        if node.voice.thread:
+            node.voice.thread.join(timeout=5)
         server.shutdown()
         server.server_close()
         node.destroy_node()

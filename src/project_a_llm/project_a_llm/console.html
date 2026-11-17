@@ -8,13 +8,13 @@
 <div id="feedback" role="status"></div><main>
 <section><div class="head"><h2>節點管理</h2><select id="mode" aria-label="狀態節點啟動模式"><option value="simulation">模擬搬運</option><option value="normal">一般派送</option></select></div><div id="nodes" class="nodes"></div></section>
 <section><div class="head"><h2>工作台分布</h2><small id="last"></small></div><div class="zones" id="zones"></div><small id="users"></small></section>
-<section><h2>麥克風語音測試</h2><div class="formrow"><label>使用者 <input id="micActor" value="U_A"></label><button class="primary" id="record" disabled>錄音 5 秒</button></div><p id="micStatus" role="status"></p><pre id="transcript" aria-live="polite">等待辨識文字</pre></section>
+<section class="wide"><div class="head"><h2>Jarvis 語音對話與工具監控</h2><a id="jarvisOpen" target="_blank">另開監控頁</a></div><p id="jarvisOffline">從節點管理啟動 Jarvis；與舊版 Agent 自動互斥切換。</p><iframe id="jarvisFrame" title="Jarvis 對話與 API 監控" style="display:none;width:100%;height:900px;border:0;border-radius:10px"></iframe></section><section><h2>舊版麥克風單次測試</h2><div class="formrow"><label>使用者 <input id="micActor" value="U_A"></label><button class="primary" id="record" disabled>錄音 5 秒</button></div><p id="micStatus" role="status"></p><pre id="transcript" aria-live="polite">等待辨識文字</pre></section>
 <section><h2>模擬語音</h2><div class="formrow"><label>使用者 <input id="actor" value="U_A"></label><label>方位 <select id="zone"><option>UNKNOWN</option><option>LEFT</option><option>RIGHT</option><option>FRONT</option><option>BACK</option></select></label></div>
 <textarea id="message" rows="2" aria-label="發話文字">我的橡皮擦在哪裡</textarea><div class="formrow"><button class="primary" id="send">送出發話</button><select id="example" aria-label="載入範例"><option value="">選擇測試語句</option><option>查看整個資料庫的狀態</option><option>我想要把橡皮擦拿去桌面</option><option>清理桌面</option></select></div><small id="sent"></small><pre id="result">等待回覆</pre></section>
 <section><div class="head"><h2>節點日誌</h2><select id="lognode" aria-label="選擇日誌"></select></div><pre id="log">等待紀錄</pre><a id="download" download>下載完整日誌</a></section></main>
 <script>
 const $=id=>document.getElementById(id);
-const names={state:"資料庫狀態",agent:"語言模型 Agent",monitor:"桌面監看",mock_speech:"模擬語音",microphone:"麥克風（Qwen3-ASR）"};
+const names={state:"資料庫狀態",chat:"Jarvis 對話 Agent（新版／只讀）",agent:"語言模型 Agent（舊版／含搬運）",monitor:"桌面監看",mock_speech:"模擬語音",microphone:"麥克風（Qwen3-ASR）"};
 const el=(tag,text,cls)=>{const e=document.createElement(tag);e.textContent=text;if(cls)e.className=cls;return e};
 let lastId="",busy=false;
 async function api(path,data){
@@ -29,6 +29,8 @@ for(const [key,title] of Object.entries(names)){
  $("lognode").add(new Option(title,key));
 }
 function draw(s){
+ if(!s.nodes.chat.online)$("jarvisFrame").removeAttribute("src");
+ const jarvisOnline=s.nodes.chat.online;$("jarvisOffline").style.display=jarvisOnline?"none":"block";$("jarvisFrame").style.display=jarvisOnline?"block":"none";const jarvisUrl="http://"+location.hostname+":"+s.chat_port+"/";$("jarvisOpen").href=jarvisUrl;if(jarvisOnline&&$("jarvisFrame").getAttribute("src")!==jarvisUrl)$("jarvisFrame").src=jarvisUrl;
  for(const [key,n] of Object.entries(s.nodes)){
   const row=$("node-"+key),button=row.querySelector("button");
   const state=n.managed?(n.online?"執行中":"啟動中"):(n.online?"外部啟動":n.exit_code?"已結束 ("+n.exit_code+")":"已停止");
@@ -56,7 +58,7 @@ function draw(s){
  const phases={loading:"載入辨識模型中",ready:"可以錄音",requested:"正在開啟麥克風",recording:"錄音中，請說話",recognizing:"辨識中",done:"辨識完成",empty:"本次沒有辨識結果"};
  $("micStatus").textContent=managed?phases[mic.phase]:"請從節點管理啟動麥克風";
  $("transcript").textContent=mic.text||"等待辨識文字";
- $("send").disabled=!s.nodes.mock_speech.online||!s.nodes.agent.online||!s.nodes.state.online;
+ $("send").disabled=!s.nodes.mock_speech.online||!(s.nodes.agent.online||s.nodes.chat.online)||!s.nodes.state.online;
  const result=lastId?s.results.find(x=>x.utterance_id===lastId):s.results[0];$("result").textContent=result?JSON.stringify(result,null,2):"等待回覆";
 }
 async function log(){const key=$("lognode").value,path="/logs/"+key;$("download").href=path;$("download").download=key+".log";const r=await fetch(path);if(r.ok&&key===$("lognode").value){const text=await r.text();$("log").textContent=text.trim().split("\n").slice(-45).join("\n")||"尚無紀錄"}}

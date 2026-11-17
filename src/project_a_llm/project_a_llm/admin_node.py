@@ -21,7 +21,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import String
 
 NODES = {key: "workbench_" + name for key, name in [
-    ("state", "state"), ("agent", "agent"), ("monitor", "monitor"), ("mock_speech", "mock_speech"), ("microphone", "microphone")]}
+    ("state", "state"), ("chat", "chat"), ("agent", "agent"), ("monitor", "monitor"), ("mock_speech", "mock_speech"), ("microphone", "microphone")]}
 STATE = "/project_a/workbench/state"
 
 
@@ -29,6 +29,7 @@ class Console(Node):
     def __init__(self):
         super().__init__("workbench_admin")
         self.port = self.declare_parameter("port", 8765).value
+        self.chat_port = self.declare_parameter("chat_port", 8767).value
         self.lock = threading.RLock()
         self.children = {}
         self.modes = {}
@@ -52,6 +53,8 @@ class Console(Node):
         self.create_subscription(String, STATE, self.update_snapshot, QoSProfile(
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(String, "/project_a/agent/result", self.result, 10)
+        self.create_subscription(String, "/project_a/chat/trace",
+                                 lambda msg: self.logs["chat"].info("TRACE %s", msg.data), 100)
         self.create_subscription(Log, "/rosout", self.roslog, 100)
 
     def update_snapshot(self, msg):
@@ -82,7 +85,7 @@ class Console(Node):
                                   exit_code=child.poll() if child else None,
                                   mode=self.modes.get(key) if running else None)
             return dict(nodes=nodes, microphone=self.mic.copy(), snapshot=self.snapshot, received=self.received,
-                        results=list(self.events), admin=self.get_name(), logs=str(self.directory))
+                        results=list(self.events), admin=self.get_name(), logs=str(self.directory), chat_port=self.chat_port)
 
     def capture(self, key, process):
         with process.stdout:
@@ -118,8 +121,17 @@ class Console(Node):
                 return
             if (proc and proc.poll() is None) or NODES[key] in self.get_node_names():
                 raise ValueError("節點已啟動")
+            if key in ("agent", "chat"):
+                other = "chat" if key == "agent" else "agent"
+                other_proc = self.children.get(other)
+                if other_proc and other_proc.poll() is None:
+                    self.control(other, "stop", None)
+                elif NODES[other] in self.get_node_names():
+                    raise ValueError("請先在原終端停止另一個 Agent，再切換版本")
             exe = Path(get_package_prefix("project_a_llm")) / "lib/project_a_llm" / key
             args = [str(exe)]
+            if key == "chat":
+                args += ["--ros-args", "-p", f"port:={self.chat_port}"]
             if key == "state":
                 if mode not in ("simulation", "normal"):
                     raise ValueError("請選擇運行模式")

@@ -84,9 +84,12 @@ class Ollama:
         return result
 
 
-def run_turn(model, history, text, actor, think, tool, emit):
+def run_turn(model, history, text, actor, think, tool, emit, voice=False):
     """Return a complete turn; caller commits history only on success."""
     messages = [{"role": "system", "content": SYSTEM + "\n目前手動選定的 user_id：" + (actor or "未指定") }]
+    if voice:
+        messages[0]["content"] += ("\n現在是語音對話。通常用一到三句口語回答，不使用 Markdown 或表格；"
+            "使用者要求細節再展開。聽不清楚時簡短確認，不要把無關詞硬猜成物品或儲位。")
     messages += history + [{"role": "user", "content": text}]
     start = len(messages) - 1
     deadline = time.monotonic() + 120

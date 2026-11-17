@@ -1,12 +1,26 @@
-# 即時對話與 LLM 監控測試版
+# Jarvis：工作台控制室的語音對話 Agent
 
-2026-11-17。入口 `ros2 run project_a_llm chat`；預設模型 `qwen3.5:4b`，監控頁 `http://localhost:8767`。
+2026-11-17。新版節點為 `/workbench_chat`，舊版 `/workbench_agent` 保留。控制室入口 **http://localhost:8765**，內嵌 Jarvis 對話與 API 監控；獨立監控仍可從 **http://localhost:8767** 開啟。
 
-已實作：瀏覽器文字多輪對話、模型串流回覆、原生 tool calling、ROS Inventory 只讀查詢、逐步事件監控，以及可選的 Ollama thinking 顯示。此版先驗證 LLM 與工具架構，尚未串入麥克風、TTS、聲紋、語音打斷、實體手臂或跨重啟長期記憶。
+新版承接舊輸入／結果 Topic，提供自然對話、上下文、資料庫查詢、語音喚醒及可打斷的最終朗讀。**新版目前只讀；需要原有搬運或修改歸位規則時，切回舊版 Agent。** 本版沒有把語音喚醒當成身分驗證，也沒有新增實體手臂控制權限。
 
-## 一個終端啟動示範
+## 操作方式
 
-在 Ubuntu-D 執行（Ollama 須已在本機 11434 運行）：
+1. 在控制室「節點管理」啟動資料庫狀態與「Jarvis 對話 Agent（新版／只讀）」。示範啟動器會自動啟動這兩項。
+2. 在內嵌 Jarvis 面板選「小安 U_A」，按「開始新對話」，再按「啟用 Jarvis 喚醒」。等待載入完成。
+3. 待機時說 **Jarvis**，短暫停頓，畫面顯示聆聽後再說「我的筆在哪裡？」。問題說完停頓約 0.9 秒即可，不必按錄音鍵。
+4. 回答播完會自動續聽，可追問「那它的預設歸位位置呢？」。
+5. **最終答案朗讀中**，再次說 Jarvis：立即停止播放，接著可說新問題。處理中的等待提示不接受此喚醒打斷。
+6. 說「任務結束」（也接受「結束任務」「結束語音對話」），或約 60 秒沒有有效輸入，會回到只偵測名字的待機狀態。
+7. 按「關閉麥克風」才會完全關閉音訊程序；待機仍需收音以偵測名字。頁面重整不會自行關掉後端麥克風。
+
+使用英文發音 Jarvis 或 Hey Jarvis。名字辨識使用獨立的本機 KWS 模型，不讓 LLM 猜測是否喚醒。個人口音、噪音及外放回音仍需現場驗收；建議先用耳機。系統不具備完整聲學回音消除，朗讀時會將回答內的喚醒名字替換成「助理」，降低自我喚醒機會。
+
+使用者可連續輪流交談；只有最終答案播放階段及待機階段允許 KWS 喚醒。ASR、LLM 推論、工具查詢及「正在處理」提示期間，名字不會中止正在執行的請求。按「關閉麥克風」會停止後續播放／收音，但已開始的只讀模型輪次仍可能完成並顯示在畫面。
+
+## 啟動測試控制室
+
+在 Ubuntu-D：
 
 ```bash
 cd /mnt/d/Robotics/project_a_ws
@@ -16,106 +30,153 @@ source install/setup.bash
 python3 scripts/chat_demo.py
 ```
 
-Windows 開啟 [對話觀測台](http://localhost:8767)。選「小安 U_A」後按「開始新對話」，可以連續問：
+開啟 [工作台控制室](http://localhost:8765)。啟動器以 SQLite backup 複製工作台資料到臨時目錄，在 **ROS domain 88** 啟動 admin，由 admin 管理 state 與 chat，因此可直接在控制室切換新舊 Agent。state 使用副本的模擬模式。Ctrl+C 關閉控制室與它管理的節點，並清除副本。
 
-1. 「你好，請叫我阿七。」
-2. 「我的筆在哪裡？」
-3. 「那它的預設歸位位置呢？」
-4. 「工具箱 B 裡面有什麼？」
-5. 「整理成簡短的表格給我。」
-
-Enter 送出，Shift+Enter 換行。模型忙碌時等本輪完成再送下一輪。預設關閉思考；勾選後下一輪傳入 `think:true`。右下「模型 thinking 輸出」只顯示 Ollama 實際傳回的文字，不把它當執行證據。
-
-啟動器以 SQLite backup 建立臨時資料庫副本，在 ROS domain 88 啟動 state 與 chat，Ctrl+C 停止兩個程序並清除副本。不同 domain 的既有正式節點不會收到此測試流量。domain 88 必須留給本示範，不要同時啟動另一個 state；若該 domain 已有其他測試，改用未使用的 domain。
+domain 88 必須留給這個測試；不要同時在該 domain 啟動第二個 state。控制室已運行時，再次執行啟動器只顯示網址，不接管或重啟原程序。若舊獨立 8767 示範仍在運行，先在其啟動終端 Ctrl+C 再啟動新版控制室。
 
 ```bash
-PROJECT_A_CHAT_DOMAIN=89 PROJECT_A_CHAT_PORT=8768 python3 scripts/chat_demo.py
-# 換模型：
-PROJECT_A_CHAT_MODEL=qwen3:1.7b python3 scripts/chat_demo.py
+# 自訂埠與未使用的 ROS domain
+PROJECT_A_ADMIN_PORT=8775 PROJECT_A_CHAT_PORT=8777 PROJECT_A_CHAT_DOMAIN=89 python3 scripts/chat_demo.py
 ```
 
-本機 Windows 已有 8766 → WSL IP 的 portproxy，但服務只綁定 loopback，故選未衝突的 8767；沒有修改系統轉發規則或防火牆。
-
-重複執行啟動器時，若 8767 已是本專案的對話頁，會顯示網址並正常結束，不建立新節點、不更改既有模型或會話。直接開啟網址即可；這次指令不會接管原程序，因此要停止服務仍須在原啟動終端按 Ctrl+C。若占用者是其他服務或尚未就緒，顯示明確提示並以非零狀態結束，不強制停止任何程序；要另開示範須同時選不同埠及未使用的 ROS domain。
-
-## 現行架構
-
-```mermaid
-flowchart LR
-    UI[瀏覽器 chat.html] -->|POST /api/chat| HTTP[chat_node HTTP server]
-    HTTP --> SESSION[Session / 近期完整輪次]
-    SESSION --> CORE[chat_core 自然對話工具迴圈]
-    CORE <-->|串流 /api/chat| MODEL[Ollama qwen3.5:4b]
-    CORE -->|白名單及參數檢查| CLIENT[ROS Inventory client]
-    CLIENT <-->|Service| STATE[state_node]
-    STATE --> DB[(工作台 SQLite 副本)]
-    CORE --> EVENTS[模型 / 工具 / 錯誤事件]
-    EVENTS -->|GET /api/state 每 350ms| UI
-    EVENTS --> TRACE[/project_a/chat/trace]
-```
-
-模型自由選擇直接回覆或呼叫 `inventory`；工具回覆以 role=tool 放回 messages，模型可繼續查詢再回答。沒有固定意圖分類、固定答覆模板或每輪確認。程式只控制工具權限、輸入大小、逾時與失控循環。
-
-| 模組 | 責任 |
-| --- | --- |
-| [chat_core.py](../src/project_a_llm/project_a_llm/chat_core.py) | 系統提示、工具 schema、Ollama NDJSON 串流、工具驗證與往返 |
-| [chat_node.py](../src/project_a_llm/project_a_llm/chat_node.py) | ROS service adapter、session、背景 worker、HTTP、trace topic |
-| [chat.html](../src/project_a_llm/project_a_llm/chat.html) | 文字對話、thinking 面板、API 時序與服務連線狀態 |
-| [chat_demo.py](../scripts/chat_demo.py) | 建立副本、啟動兩節點、退出清理 |
-
-工具只允許 `objects / users / status`，不暴露 SQL、寫入、搬運或 shell。保留既有 Inventory.srv。跨輪解析後的查詢欄位經只讀驗證，再合成 canonical req.text 相容舊服務的文字存在性檢查；這不是允許繞過寫入驗證。`我的` 若模型漏掉 person，程式補上 `@me`，未選身分則回工具錯誤。
-
-這是本機可信使用者的測試介面，手動 user_id 不是聲紋驗證或登入。可查其他人的公開工作台物品，不宣稱實作資料列存取控制。HTTP 僅 loopback、校驗 Host/Origin、不開 CORS。
-
-## 監控內容及記憶
-
-| 事件 | 意義 |
-| --- | --- |
-| turn_start | 模型、保留的歷史輪數 |
-| model_start | 正在等待 Ollama、呼叫次數、messages 數、思考模式 |
-| model_metrics | Ollama 回傳的載入／推論時間、token 數、完成原因；duration 單位 ns |
-| tool_start | 模型原始工具名稱與參數；進入待處理狀態 |
-| tool_validated | 實際送入 service 的正規化參數 |
-| tool_end / tool_error | 真實工具結果或錯誤、往返毫秒 |
-| turn_end / turn_error | 本輪完成或中止；錯誤時串流文字屬未完成輸出 |
-
-頁面另顯示本輪成功查詢次數，避免把上一輪 tool_end 當成本輪證據。瀏覽器實測 thinking 模式的追問曾直接沿用上一輪結果；尚未增加強制重查的流程限制。
-
-thinking/content 增量即時累積於頁面；ROS trace 發布上述結構化事件，沒有逐 token 洪水。查看：
+使用原本的正式架構時，沿用既有 domain 及資料庫設定：
 
 ```bash
 source /mnt/d/Robotics/project_a_ws/install/setup.bash
+ros2 run project_a_llm admin
+```
+
+從控制室啟動所需節點。啟動 Jarvis 會停止由同一控制室管理的舊 Agent，啟動舊 Agent 也會停止 Jarvis；若另一版本是外部終端啟動，控制室會要求先在原終端停止，不強制殺掉未知程序。切換會清除被停止節點的 RAM 對話。
+
+目前 Windows 有既有 8766 portproxy，因此本版使用 8767，沒有改動轉發或防火牆。
+
+## 音訊依賴與配置
+
+主 ROS Python 不需要載入模型庫。獨立 ASR venv 須包含 `qwen_asr`、Torch、NumPy。原開發機預設路徑為：
+
+```text
+/home/ktliu/MakeNTU/emotion_robot_controller/voice_stt_remote/windows_desktop_server_bundle/.venv/bin/python
+```
+
+其他機器先設定 `PROJECT_A_ASR_PYTHON`。喚醒依賴與官方小型模型可用以下指令安裝（目前開發機已完成）：
+
+```bash
+python3 scripts/setup_jarvis_voice.py
+```
+
+此腳本安裝 sherpa-onnx 2.0.1、sentencepiece 0.2.3 到指定 ASR venv，下載官方 English 3.3M KWS 模型到 `~/.cache/project_a/kws/`；不提交模型權重至 Git。首次 ASR 載入會下載／使用 Hugging Face 快取的 Qwen3-ASR-0.6B。
+
+系統另需 `pulseaudio-utils`（parec、paplay）、`icu-devtools`（uconv）、Windows 已安裝的中文 TTS 語音。WSLg 的 RDPSource 取得 Windows 預設麥克風；Windows TTS 先產生臨時 WAV，WSLg 播放程序負責輸出及立即取消，臨時檔案在播完或中止後刪除。
+
+| 環境變數 | 預設／用途 |
+| --- | --- |
+| PROJECT_A_CHAT_MODEL | qwen3.5:4b |
+| PROJECT_A_ASR_PYTHON | 上述 venv 路徑 |
+| PROJECT_A_ASR_MODEL | Qwen/Qwen3-ASR-0.6B |
+| PROJECT_A_ASR_DEVICE | 有 CUDA 時 cuda:0，否則 cpu；記憶體不足可指定 cpu |
+| PROJECT_A_ASR_THREADS | 6，CPU 運算執行緒 |
+| PROJECT_A_VOICE_SOURCE | RDPSource |
+| PROJECT_A_VOICE_RMS | 0.012；太吵提高、聲音太小降低 |
+| PROJECT_A_VOICE_IDLE_SECONDS | 60；只計算等待使用者輸入時間，不計模型／播報耗時 |
+| PROJECT_A_WAKE_THRESHOLD | 0.25；提高會較難喚醒，需現場校準 |
+| PROJECT_A_KWS_MODEL_DIR | `~/.cache/project_a/kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01` |
+| PROJECT_A_TTS_SINK | 未指定時使用 PulseAudio 預設輸出；測試可指定虛擬輸出 |
+
+這些配置在啟動控制室／chat 前設定。第一次初始化包含 ASR 暖機，完成後才進入待機。LLM 思考模式可在啟用喚醒前勾選，語音會話中固定不變。
+
+## 實際架構
+
+```mermaid
+flowchart TD
+    UI[工作台控制室 8765] --> MGMT[admin：新版／舊版互斥管理]
+    UI --> PANEL[內嵌 Jarvis 對話及 API 監控 8767]
+    MIC[Windows 麥克風 / WSLg] --> AUDIO[音訊 worker / RAM 緩衝]
+    AUDIO --> KWS[sherpa-onnx：Jarvis 關鍵字]
+    AUDIO --> ASR[Qwen3-ASR-0.6B / 繁體轉換]
+    KWS --> VOICE[語音狀態機：待機／對話／最終朗讀]
+    ASR --> VOICE
+    VOICE --> CHAT[workbench_chat / session]
+    INPUT[/project_a/agent/input] --> CHAT
+    CHAT <--> MODEL[Ollama Qwen3.5-4B / 原生工具迴圈]
+    CHAT <--> INV[Inventory Service / 只讀驗證]
+    INV --> DB[(SQLite)]
+    CHAT --> RESULT[/project_a/agent/result]
+    CHAT --> TRACE[/project_a/chat/trace]
+    TRACE --> PANEL
+    TRACE --> LOG[控制室 Jarvis 日誌]
+    CHAT -->|最終文字| VOICE
+    VOICE --> WAV[Windows TTS → 臨時 WAV]
+    WAV --> PLAYER[可取消的 paplay]
+    KWS -->|僅最終朗讀時| PLAYER
+    PLAYER -->|播完或被打斷| VOICE
+```
+
+語音狀態：`loading_asr → waiting_wake → listening → recognizing → processing → speaking_final → listening`。`speaking_final + Jarvis → interrupted → listening`；`任務結束 / idle_timeout → waiting_wake`；按關閉麥克風則進入 `off`。
+
+等待超過約 4 秒時最多播報一次處理提示；提示不加入模型歷史，也不是完成證據。只朗讀最終 assistant 訊息，不讀 thinking 或工具前言。語音模式提示模型通常用一到三句口語回答，使用者要求細節仍可展開；沒有固定意圖分類表或每輪強制確認。
+
+ASR 的音量端點偵測使用 100 ms 音框、900 ms 靜音結句、單句約 15 秒上限；PulseAudio 收音延遲設定為 100 ms。保留喚醒判定後、播放器停止期間的音框，排除喚醒詞尾音。先叫名字並短暫停頓再說問題；連在同一句且沒有停頓的辨識不保證。音訊環形緩衝最多約 40 秒，只在 RAM；未喚醒的音訊不送完整 ASR 或 LLM，也不保存錄音。
+
+## 舊 ROS 架構的接法
+
+| 介面 | 新版行為 |
+| --- | --- |
+| `/project_a/agent/input` String | 接收 utterance_id、text、user_id；同 user_id 的舊輸入沿用會話；同 ID 相同內容去重，不同內容報 ID_CONFLICT |
+| `/project_a/agent/result` String | 保留 utterance_id、status、message，新增 session_id、turn_id，tool=chat |
+| `/project_a/speech/command` String | 從舊 input 進來的結果仍發送，供既有 speaker 使用；Jarvis 麥克風對話由自身播放器處理，不重複發布 |
+| `/project_a/workbench/inventory` | 沿用原 srv 型別，只送 objects/users/status |
+| `/project_a/chat/trace` String | 模型、工具與 voice_* 事件；控制室寫入 chat 日誌 |
+| `/project_a/arm/command` | 新版不發布，搬運仍由舊版 Agent 處理 |
+
+控制室的模擬語音仍經 mock_speech 進正式 input；舊 microphone 單次錄音也可以送到新版。使用 Jarvis 喚醒時不需啟動舊 microphone 或 speaker。不要手動同時啟動兩個版本；新版偵測到舊節點時不處理正式 input，控制室互斥管理是主要切換機制。
+
+正式 input 的工具細節可從控制室選「Jarvis」日誌查看；內嵌對話面板顯示該瀏覽器會話的完整時序。
+
+## 監控、工具與記憶
+
+模型自由決定是否查詢，role=tool 結果會回到 messages，允許多次查詢後回答。工具白名單只讀；不暴露 SQL、shell 或手臂腳本。`我的` 若模型漏填 person，程式補 @me；未選 actor 就回錯誤。
+
+這是本機可信操作者介面，手動 user_id 不是聲紋驗證／登入，未實作資料列存取控制。HTTP 只綁 loopback，校驗 Host/Origin；控制室的節點操作另要求 X-Workbench 標頭。
+
+監控事件包含 model_start/end、model_metrics、tool_start/validated/end/error、turn_start/end/error 及 voice_*。可展開參數、工具結果、錯誤、時間與實際播報文字。Ollama duration 單位 ns，工具及 ASR duration_ms 為毫秒。
+
+頁面顯示本輪成功查詢次數，避免將舊工具結果誤當成新查詢。thinking 面板只呈現外部本機模型實際提供的欄位，不代表工具已執行，也不是模型內部的完整狀態。
+
+```bash
 ROS_DOMAIN_ID=88 ros2 topic echo /project_a/chat/trace std_msgs/msg/String --full-length
 ```
 
-近期記憶保留最多 10 個完整成功輪次；每輪前再將歷史縮到約 10000 個 JSON 字元內，保留完整 tool call/result 組。頁面最多顯示 20 輪、300 個事件；最多 32 個 session，額滿淘汰最早建立的非忙碌 session。這是字元預算而非精準 tokenizer 計數，長對話可能忘記較早內容。thinking 不重播到下一輪上下文；失敗輪次不寫入模型歷史。
+最多保留 10 個完整成功輪次，每輪前將歷史縮到約 10000 個 JSON 字元內；保持完整工具呼叫／結果組。頁面最多 20 輪與 300 個事件，session 最多 32 個。這是字元預算，不是精準 tokenizer 計數；較早內容會被移除。失敗輪次不寫入模型歷史，thinking 不重播。
 
-所有記憶、對話與事件存在 RAM，節點重啟消失。新 session 隔離歷史；重新整理頁面沿用 sessionStorage 內的 session ID。身分切換必須開新對話。失效會話按「開始新對話」恢復。
+所有對話記憶在 RAM，重啟清空。任務結束會關閉當前聆聽階段但保留同一 session 近期上下文；要清空請關閉麥克風後開始新對話。模型最多 6 次往返／8 次工具，輸出上限 1024 tokens、context 8192。模型 deadline 120 秒、socket 30 秒、Inventory 2 秒 discovery／10 秒回覆；阻塞 I/O 可能再多等一次 socket timeout。
 
-模型輸出上限 1024 tokens、context 8192；每輪最多 6 次模型往返／8 次工具呼叫。模型串流 deadline 120 秒，socket 等待上限 30 秒，Inventory discovery 2 秒／回覆等待 10 秒。全域同時只處理一輪，避免小 GPU 同時堆積多個推論；沒有實作取消正在生成的回覆。deadline 是迴圈檢查，阻塞 I/O 仍可能多等一個 socket timeout。
+## 原始碼與驗證
 
-## 直接接既有 state
+| 檔案 | 用途 |
+| --- | --- |
+| [chat_node.py](../src/project_a_llm/project_a_llm/chat_node.py) | ROS 相容入口、HTTP、session、trace |
+| [chat_core.py](../src/project_a_llm/project_a_llm/chat_core.py) | 自然對話、Ollama 串流、只讀工具迴圈 |
+| [chat_voice.py](../src/project_a_llm/project_a_llm/chat_voice.py) | 喚醒／對話／打斷／閒置狀態機及 TTS |
+| [chat_audio_worker.py](../src/project_a_llm/project_a_llm/chat_audio_worker.py) | 持續音訊環形緩衝、端點判斷、ASR |
+| [chat_kws.py](../src/project_a_llm/project_a_llm/chat_kws.py) | Jarvis／Hey Jarvis 關鍵字模型 |
+| [chat.html](../src/project_a_llm/project_a_llm/chat.html) | 對話與 API 時序 |
+| [chat_demo.py](../scripts/chat_demo.py) | 資料庫副本與控制室啟動器 |
+| [setup_jarvis_voice.py](../scripts/setup_jarvis_voice.py) | 官方喚醒模型與依賴安裝 |
 
-已經啟動 state 時不用示範啟動器，只在同一 ROS domain 啟動 chat：
-
-```bash
-source /mnt/d/Robotics/project_a_ws/install/setup.bash
-ros2 run project_a_llm chat --ros-args -p model:=qwen3.5:4b -p port:=8767
-```
-
-chat 不訂閱正式 `/project_a/agent/input`、不發布 `/project_a/arm/command`；與舊 agent 的輸入分離。原管理頁仍是 8765。不要在同一 domain 重複啟動 state。
-
-## 驗證結果與限制
-
-2026-11-17 在 Ubuntu-D 完成 colcon 建置、10 項核心 pytest，以及真實 Ollama + ROS + SQLite 副本四輪測試。查詢與代名詞追問都有實際 tool_end；新 session 無前一場歷史；前後 SQLite dump 相同。測試腳本啟動自己的 domain 87 / port 18766，結束清理程序與副本：
+執行測試：
 
 ```bash
-python3 -m pytest src/project_a_llm/test/test_chat_core.py -q
+python3 -m pytest src/project_a_llm/test/test_chat_core.py src/project_a_llm/test/test_chat_voice.py -q
 python3 src/project_a_llm/test/chat_live_smoke.py
+python3 src/project_a_llm/test/jarvis_live_smoke.py
 ```
 
-首次冷載入那輪約 17.7 秒，其中載入約 15.8 秒；修正提示後的暖機樣本為 2.03、2.03、4.08、4.05 秒（整輪完成時間，不是首 token）。這是少量功能測試，並非 p95 基準。另以 Windows Chrome 驗證身分選單、新對話、送出查詢、工具結果展開、thinking 顯示；ROS trace 以 std_msgs/msg/String 訂閱確認收到 turn_start。
+最後一個測試使用 domain 87、port 18767、資料庫副本與兩個臨時 PulseAudio 虛擬裝置；合成測試語音，不錄使用者麥克風，退出時清除音訊裝置及副本。測試以 HF_HUB_OFFLINE 使用已快取的 ASR 模型，請先完成一般語音初始化。請勿與使用同 domain／port 的另一個測試同時執行。
 
-測試中模型記得「阿七」卻曾把誰要求稱呼誰說反；第一次也曾沿用上一輪工具資料而未重新查詢。已補充短提示並看到追問重新查詢，但不保證所有語句都能遵循。這版不使用額外 LLM 驗證器或硬編碼回覆來掩蓋小模型的語意錯誤；應利用監控逐句核對工具證據。架構正常不代表模型回答必然正確。
+2026-11-17 已驗證 colcon 建置、20 項核心／語音測試、控制室內嵌面板與新舊 Agent 雙向互斥切換。完整虛擬音訊測試通過：一般中文不喚醒、Jarvis 開始收音、ASR 正確轉寫「我的筆在哪裡」、Inventory 查詢成功、最終 WAV 已開始播放後由 Jarvis 中止、追問沿用筆的上下文、播完自動續聽、「任務結束」回待機、閒置回待機、手動停止與資料庫不變。閒置測試縮短為 8 秒，產品預設 60 秒。
 
-原生工具串流與 thinking 欄位參考 [Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling)、[Ollama thinking](https://docs.ollama.com/capabilities/thinking)。頁面顯示的是外部本機模型提供的 thinking，不是對模型內部狀態的完整可觀測性。
+四輪真實文字／Ollama／Inventory 整合測試再次通過，包含跨輪記憶、工具往返、會話隔離、資料庫不變；原 ROS input/result 也通過查詢、相同 ID 重送回放及不同內容 ID_CONFLICT。Qwen3-ASR-0.6B 在本機 GPU 的三次同句獨立測試為首次約 8.9 秒、暖機後約 1.04／0.82 秒；這不是多模型併行或現場語音的 p95。
+
+小模型仍可能沿用舊查詢、混淆稱呼或編造說明。監控證據用來檢查架構與結果，不保證模型每句都正確。現場口音、喇叭回音、多人說話及喚醒閾值仍需使用者實際測試。
+
+參考：[Ollama tool calling](https://docs.ollama.com/capabilities/tool-calling)、[Ollama thinking](https://docs.ollama.com/capabilities/thinking)、[Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B)、[sherpa-onnx 官方喚醒模型](https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html)。

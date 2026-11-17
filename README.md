@@ -5,6 +5,7 @@
 在已安裝 ROS 2 Humble 與 colcon 的 Ubuntu-D 中，從本儲存庫根目錄執行：
 
 ```bash
+sudo apt-get install icu-devtools pulseaudio-utils
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
@@ -17,5 +18,4 @@ ros2 run project_a_llm admin
 
 - [架構圖、語音測試與 ROS 介面](src/project_a_llm/ROS_AGENT.md)
 - [Qwen JSON 格式與草稿](src/project_a_llm/QWEN_OUTPUT_FORMAT.md)
-
-- [即時對話與 LLM 監控：運行方法、架構與測試](docs/LIVE_CHAT.md)
+- [控制室 Jarvis：語音喚醒、對話打斷、LLM 監控與運行方法](docs/LIVE_CHAT.md)

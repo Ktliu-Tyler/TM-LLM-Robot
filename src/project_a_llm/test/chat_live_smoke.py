@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import uuid
 from urllib.request import Request, urlopen
 
 
@@ -79,6 +80,40 @@ def main():
             other = api("/api/session", {"user_id": "U_B"})["session_id"]
             assert not api("/api/state?session_id="+other)["turns"]
             print("PASS: live four-turn conversation, tool round trips, DB unchanged, separate session")
+            # Exercise the original architecture's input/result contract too.
+            import rclpy
+            from std_msgs.msg import String
+            rclpy.init(domain_id=87)
+            probe = rclpy.create_node("chat_contract_probe")
+            received = []
+            probe.create_subscription(String, "/project_a/agent/result",
+                lambda msg: received.append(json.loads(msg.data)), 10)
+            publisher = probe.create_publisher(String, "/project_a/agent/input", 10)
+            def spin_until(predicate, timeout=160):
+                deadline = time.monotonic()+timeout
+                while time.monotonic()<deadline:
+                    rclpy.spin_once(probe, timeout_sec=0.1)
+                    if predicate():
+                        return
+                raise TimeoutError("ROS input/result contract")
+            try:
+                spin_until(lambda:publisher.get_subscription_count()>0, 20)
+                event = dict(utterance_id="contract-"+str(uuid.uuid4()), user_id="U_A", text="我的筆在哪裡？")
+                publisher.publish(String(data=json.dumps(event, ensure_ascii=False)))
+                spin_until(lambda:len(received)>=1)
+                assert received[0]["status"]=="ok", received
+                publisher.publish(String(data=json.dumps(event, ensure_ascii=False)))
+                spin_until(lambda:len(received)>=2, 10)
+                assert received[0]["turn_id"]==received[1]["turn_id"]
+                event["text"]="不同內容"
+                publisher.publish(String(data=json.dumps(event, ensure_ascii=False)))
+                spin_until(lambda:len(received)>=3, 10)
+                assert received[2]["error"]=="ID_CONFLICT"
+                assert rows()==before
+                print("PASS: ROS input/result, duplicate replay, ID conflict, DB unchanged", flush=True)
+            finally:
+                probe.destroy_node()
+                rclpy.shutdown()
         finally:
             for proc in processes:
                 if proc.poll() is None:
