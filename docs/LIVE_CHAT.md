@@ -34,7 +34,9 @@ PROJECT_A_CHAT_DOMAIN=89 PROJECT_A_CHAT_PORT=8768 python3 scripts/chat_demo.py
 PROJECT_A_CHAT_MODEL=qwen3:1.7b python3 scripts/chat_demo.py
 ```
 
-本機 Windows 已有 8766 → WSL IP 的 portproxy，但服務只綁定 loopback，故選未衝突的 8767；沒有修改系統轉發規則或防火牆。若埠被占用，先停止舊示範或換埠。
+本機 Windows 已有 8766 → WSL IP 的 portproxy，但服務只綁定 loopback，故選未衝突的 8767；沒有修改系統轉發規則或防火牆。
+
+重複執行啟動器時，若 8767 已是本專案的對話頁，會顯示網址並正常結束，不建立新節點、不更改既有模型或會話。直接開啟網址即可；這次指令不會接管原程序，因此要停止服務仍須在原啟動終端按 Ctrl+C。若占用者是其他服務或尚未就緒，顯示明確提示並以非零狀態結束，不強制停止任何程序；要另開示範須同時選不同埠及未使用的 ROS domain。
 
 ## 現行架構
 

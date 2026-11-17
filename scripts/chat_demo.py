@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Launch a local chat demo against a disposable workbench database copy."""
 import os
+import errno
 from pathlib import Path
 import signal
 import socket
 import sqlite3
 import subprocess
 import tempfile
+from urllib.request import ProxyHandler, build_opener
+
+
+def is_chat_monitor(port):
+    """Recognize the existing local UI without creating or altering a session."""
+    try:
+        with build_opener(ProxyHandler({})).open(
+                f"http://127.0.0.1:{port}/", timeout=2) as response:
+            return "Workbench / 對話觀測台" in response.read(32768).decode("utf-8")
+    except (OSError, UnicodeError):
+        return False
 
 
 def main():
@@ -14,7 +26,20 @@ def main():
     port = int(os.getenv("PROJECT_A_CHAT_PORT", "8767"))
     with socket.socket() as probe:
         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        probe.bind(("127.0.0.1", port))
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError as error:
+            if error.errno != errno.EADDRINUSE:
+                raise
+            if is_chat_monitor(port):
+                print(f"對話監控頁已在運行，請直接開啟 http://localhost:{port}", flush=True)
+                print("本次沒有啟動新節點，也沒有變更原會話、模型或資料庫。")
+                print("需要重新啟動時，請先在原啟動終端按 Ctrl+C，再執行本指令。")
+                return
+            raise SystemExit(
+                f"連接埠 {port} 已被其他服務占用，或既有服務尚未就緒。\n"
+                "未停止任何程序；請確認占用服務，或使用不同的埠與 ROS domain：\n"
+                "PROJECT_A_CHAT_PORT=8768 PROJECT_A_CHAT_DOMAIN=89 python3 scripts/chat_demo.py")
     env = dict(os.environ, ROS_DOMAIN_ID=os.getenv("PROJECT_A_CHAT_DOMAIN", "88"))
     with tempfile.TemporaryDirectory(prefix="project-a-chat-demo-") as directory:
         path = Path(directory) / "workbench.sqlite3"
